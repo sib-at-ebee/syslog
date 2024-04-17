@@ -65,12 +65,16 @@ fn log_with_level(level: slog::Level, mut io: std::sync::MutexGuard<Box<SysLogge
 ///
 /// This follows ``get_process_info()`` in the syslog crate to some extent
 /// which is private.
-fn syslog_format3164(facility: syslog::Facility, hostname: Option<String>) -> syslog::Formatter3164 {
-    let path = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::new());
-    let process = path.file_name()
-        .map(|file| file.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::new());
+fn syslog_format3164(facility: syslog::Facility, hostname: Option<String>, process_name: Option<String>) -> syslog::Formatter3164 {
+    let process = process_name.unwrap_or_else(|| {
+        let path = std::env::current_exe()
+            .unwrap_or_else(|_| PathBuf::new());
+        let filename = path.file_name()
+            .map(|file| file.to_string_lossy().into_owned())
+            .unwrap_or_else(|| String::new());
+        filename
+    });
+
 
     syslog::Formatter3164 {
         facility,
@@ -233,6 +237,7 @@ enum SyslogKind {
 pub struct SyslogBuilder {
     facility: Option<syslog::Facility>,
     level: Level,
+    process: Option<String>,
     logkind: Option<SyslogKind>,
 }
 impl Default for SyslogBuilder {
@@ -240,6 +245,7 @@ impl Default for SyslogBuilder {
         Self {
             facility: None,
             level: Level::Trace,
+            process: None,
             logkind: None,
         }
     }
@@ -263,6 +269,13 @@ impl SyslogBuilder {
     pub fn level(self, lvl: slog::Level) -> Self {
         let mut s = self;
         s.level = lvl;
+        s
+    }
+
+    /// Process name inside Syslog
+    pub fn process(self, name: String) -> Self {
+        let mut s = self;
+        s.process = Some(name);
         s
     }
 
@@ -316,7 +329,7 @@ impl SyslogBuilder {
         };
         let log = match logkind {
             SyslogKind::Unix { path } => {
-                let format = syslog_format3164(facility, None);
+                let format = syslog_format3164(facility, None, self.process);
                 syslog::unix_custom(format, path).map_err(handle_syslog_error)?
             }
             SyslogKind::Udp {
@@ -324,11 +337,11 @@ impl SyslogBuilder {
                 host,
                 hostname,
             } => {
-                let format = syslog_format3164(facility, Some(hostname));
+                let format = syslog_format3164(facility, Some(hostname), self.process);
                 syslog::udp(format, local, host).map_err(handle_syslog_error)?
             },
             SyslogKind::Tcp { server, hostname } => {
-                let format = syslog_format3164(facility, Some(hostname));
+                let format = syslog_format3164(facility, Some(hostname), self.process);
                 syslog::tcp(format, server).map_err(handle_syslog_error)?
             },
         };
@@ -338,7 +351,7 @@ impl SyslogBuilder {
 
 /// `Streamer` to Unix syslog using RFC 3164 format
 pub fn unix_3164_with_level(facility: syslog::Facility, level: Level) -> io::Result<Streamer3164> {
-    let format = syslog_format3164(facility, None);
+    let format = syslog_format3164(facility, None, None);
     syslog::unix(format)
         .map(Box::new)
         .map(|logger| Streamer3164::new_with_level(logger, level))
@@ -347,7 +360,7 @@ pub fn unix_3164_with_level(facility: syslog::Facility, level: Level) -> io::Res
 
 /// `Streamer` to Unix syslog using RFC 3164 format
 pub fn unix_3164(facility: syslog::Facility) -> io::Result<Streamer3164> {
-    let format = syslog_format3164(facility, None);
+    let format = syslog_format3164(facility, None, None);
     syslog::unix(format)
         .map(Box::new)
         .map(Streamer3164::new)
